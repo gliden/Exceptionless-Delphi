@@ -70,6 +70,7 @@ type
     FTimestamp: TDateTime;
     FUser: TExceptionlessUser;
     FSource: String;
+    FMessage: String;
     FTags: TExceptionlessTags;
     FVersion: String;
     FEnvironment: TExceptionlessEnvironment;
@@ -79,10 +80,12 @@ type
     constructor Create;
     destructor Destroy; override;
     function ToJson: TJsonObject; virtual;
+    function ToString: String; override;
 
     property Version: String read FVersion write FVersion;
     property Source: String read FSource write FSource;
     property &Type: TExceptionlessEventType read FType write FType;
+    property &Message: String read FMessage write FMessage;
     property TimeStamp: TDateTime read FTimestamp write FTimestamp;
     property User: TExceptionlessUser read FUser;
     property UserDescription: TExceptionlessUserDescription read FUserDescription;
@@ -92,13 +95,11 @@ type
 
   TExceptionlessSimpleError = class(TExceptionlessEvent)
   private
-    FMessage: String;
     FExceptionType: String;
     FStackTrace: String;
   public
     function ToJson: TJsonObject; override;
     function ToString: String; override;
-    property &Message: String read FMessage write FMessage;
     property ExceptionType: String read FExceptionType write FExceptionType;
     property StackTrace: String read FStackTrace write FStackTrace;
   end;
@@ -111,7 +112,7 @@ type
     FUserAgent: String;
   public
     constructor Create(httpWrapper: IHttpClientWrapper);
-    procedure Send(error: TExceptionlessSimpleError);
+    procedure Send(event: TExceptionlessEvent);
 
     property ProjectId: String read FProjectId write FProjectId;
     property ApiKey: String read FApiKey write FApiKey;
@@ -130,7 +131,7 @@ begin
   FHttpWrapper := httpWrapper;
 end;
 
-procedure TExceptionless.Send(error: TExceptionlessSimpleError);
+procedure TExceptionless.Send(event: TExceptionlessEvent);
 const
   C_RequestUrl = 'https://collector.exceptionless.io/api/v2/projects/%s/events';
 var
@@ -141,12 +142,18 @@ var
 begin
   url := Format(C_RequestUrl, [ProjectId]);
 
-  strStream := TStringStream.Create(error.ToString);
+  strStream := TStringStream.Create(event.ToString);
 
   header := THttpHeader.SingleItem('Authorization', Format('Bearer %s', [ApiKey]));
   THttpHeader.AddItem('userAgent', userAgent, header);
 
   client := THttpClientWrapper.Create(FHttpWrapper);
+  client.OnResponse :=
+    procedure (response: IHTTPClientResponse)
+    begin
+      strStream.Free;
+      client.Free;
+    end;
   client.AsyncPost(url, 'application/json', strStream, header);
 end;
 
@@ -158,7 +165,6 @@ var
 begin
   Result := inherited;
   errorObj := TJSONObject.Create;
-  errorObj.AddPair('message', TSvJsonString.Create(FMessage));
   errorObj.AddPair('type', TSvJsonString.Create(FExceptionType));
   errorObj.AddPair('stack_trace', TSvJsonString.Create(FStackTrace));
 
@@ -218,10 +224,20 @@ begin
   Result.AddPair('date', DateTimeToXMLTime(TimeStamp));
   Result.AddPair('source', TSvJsonString.Create(FSource));
   Result.AddPair('@version', TSvJsonString.Create(FVersion));
+  Result.AddPair('message', TSvJsonString.Create(FMessage));
   Result.AddPair('tags', FTags.ToJson);
   Result.AddPair('@user', FUser.ToJson);
   Result.AddPair('@user_description', FUserDescription.ToJson);
   Result.AddPair('@environment', FEnvironment.ToJson);
+end;
+
+function TExceptionlessEvent.ToString: String;
+var
+  jsonObj: TJSONObject;
+begin
+  jsonObj := ToJson;
+  Result := jsonObj.ToString;
+  jsonObj.Free;
 end;
 
 { TExceptionlessTags }
